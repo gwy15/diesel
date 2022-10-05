@@ -1,4 +1,4 @@
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use std::os::raw as libc;
 
 use crate::deserialize::{self, FromSql};
@@ -59,6 +59,65 @@ impl FromSql<Timestamp, Mysql> for NaiveDateTime {
                 mysql_time.second as u32,
                 mysql_time.second_part as u32,
             )
+        })
+        .ok_or_else(|| format!("Cannot parse this date: {:?}", mysql_time).into())
+    }
+}
+
+#[cfg(all(feature = "chrono", feature = "mysql_backend"))]
+impl ToSql<Datetime, Mysql> for DateTime<Utc> {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Mysql>) -> serialize::Result {
+        <DateTime<Utc> as ToSql<Timestamp, Mysql>>::to_sql(self, out)
+    }
+}
+
+#[cfg(all(feature = "chrono", feature = "mysql_backend"))]
+impl FromSql<Datetime, Mysql> for DateTime<Utc> {
+    fn from_sql(bytes: MysqlValue<'_>) -> deserialize::Result<Self> {
+        <DateTime<Utc> as FromSql<Timestamp, Mysql>>::from_sql(bytes)
+    }
+}
+
+#[cfg(all(feature = "chrono", feature = "mysql_backend"))]
+impl ToSql<Timestamp, Mysql> for DateTime<Utc> {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Mysql>) -> serialize::Result {
+        let mysql_time = MysqlTime {
+            year: self.year() as libc::c_uint,
+            month: self.month() as libc::c_uint,
+            day: self.day() as libc::c_uint,
+            hour: self.hour() as libc::c_uint,
+            minute: self.minute() as libc::c_uint,
+            second: self.second() as libc::c_uint,
+            second_part: libc::c_ulong::from(self.timestamp_subsec_micros()),
+            neg: false,
+            time_type: MysqlTimestampType::MYSQL_TIMESTAMP_DATETIME,
+            time_zone_displacement: 0,
+        };
+
+        <MysqlTime as ToSql<Timestamp, Mysql>>::to_sql(&mysql_time, &mut out.reborrow())
+    }
+}
+
+#[cfg(all(feature = "chrono", feature = "mysql_backend"))]
+impl FromSql<Timestamp, Mysql> for DateTime<Utc> {
+    fn from_sql(bytes: MysqlValue<'_>) -> deserialize::Result<Self> {
+        let mysql_time = <MysqlTime as FromSql<Timestamp, Mysql>>::from_sql(bytes)?;
+
+        NaiveDate::from_ymd_opt(
+            mysql_time.year as i32,
+            mysql_time.month as u32,
+            mysql_time.day as u32,
+        )
+        .and_then(|v| {
+            v.and_hms_micro_opt(
+                mysql_time.hour as u32,
+                mysql_time.minute as u32,
+                mysql_time.second as u32,
+                mysql_time.second_part as u32,
+            )
+        })
+        .map(|naive| {
+            DateTime::from_utc(naive, Utc)
         })
         .ok_or_else(|| format!("Cannot parse this date: {:?}", mysql_time).into())
     }
